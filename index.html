@@ -94,12 +94,16 @@
   }
 
   body.phone-mode { height: 100vh; overflow: hidden; padding: 0; justify-content: flex-start; }
+  body.phone-mode #canvas { width: 100vw !important; height: calc(100dvh - 52px) !important; }
   body.phone-mode h1 { display: none; }
   body.phone-mode .subtitle { display: none; }
   body.phone-mode .controls { display: none; }
-  body.phone-mode .hud { gap: 14px; margin: 4px 0; flex-wrap: wrap; justify-content: center; }
-  body.phone-mode .stat-value { font-size: 1rem; }
-  body.phone-mode .stat-label { font-size: 0.6rem; }
+  body.phone-mode .hud { gap: 10px; margin: 2px 0; flex-wrap: wrap; justify-content: center; padding: 0 6px; box-sizing: border-box; width: 100%; }
+  body.phone-mode .stat-value { font-size: 0.95rem; }
+  body.phone-mode .stat-label { font-size: 0.55rem; }
+  body.phone-mode #overlay { padding: 12px 16px; box-sizing: border-box; overflow-y: auto; }
+  body.phone-mode .lb-wrap { width: 100% !important; }
+  body.phone-mode .lb-row { grid-template-columns: 24px 1fr 70px 76px; font-size: 0.78rem; gap: 4px; padding: 5px 6px; }
 
   .controls {
     margin-top: 14px;
@@ -121,6 +125,7 @@
     justify-content: center;
     gap: 16px;
     background: rgba(8, 11, 20, 0.88);
+    z-index: 100;
   }
 
   .big-text {
@@ -181,13 +186,13 @@
   .name-input:focus { border-bottom-color: var(--blue); }
   .name-input::placeholder { color: #2A4060; letter-spacing: 1px; font-family: 'Sarabun', sans-serif; font-size: 0.9rem; }
 
-  .lb-wrap { width: 640px; }
+  .lb-wrap { width: 640px; max-width: 100%; box-sizing: border-box; }
   .lb-row {
     display: grid;
-    grid-template-columns: 40px 1fr 110px 120px;
+    grid-template-columns: 28px 1fr 80px 88px;
     align-items: center;
-    gap: 8px;
-    padding: 6px 14px;
+    gap: 6px;
+    padding: 6px 10px;
     border-bottom: 1px solid rgba(255,255,255,0.04);
     font-size: 0.92rem;
     transition: background 0.1s;
@@ -330,115 +335,105 @@ const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 let gameMode = isMobile ? 'phone' : 'pc';
 if (gameMode === 'phone') document.body.classList.add('phone-mode');
 
-// ─── Joystick pad (always created, shown only in phone mode) ──────────────────
+// ─── MOBA-style fixed joystick (ROV style) ────────────────────────────────────
+const JOY_R   = 48;   // outer circle radius (px)
+const JOY_K   = 20;   // knob radius (px)
+const JOY_MAX = 34;   // max knob displacement (px)
+const JOY_SENS = 3.2;
+
+// Visual joystick — fixed in bottom-left, pointer-events:none (input via joyZone)
 const joyPad = document.createElement('div');
 joyPad.id = 'joypad';
-joyPad.style.cssText = 'width:100%;min-height:130px;flex:1;background:#0A1020;border-top:2px solid #0BC4FF40;position:relative;touch-action:none;overflow:hidden;box-sizing:border-box;display:none;';
-
-const joyHint = document.createElement('div');
-joyHint.textContent = 'ลากนิ้วเพื่อเคลื่อนที่';
-joyHint.style.cssText = 'position:absolute;top:10px;width:100%;text-align:center;font-size:0.75rem;color:#3A6080;letter-spacing:2px;pointer-events:none;font-family:Sarabun,sans-serif;user-select:none;text-transform:uppercase;';
+joyPad.style.cssText = `position:fixed;bottom:28px;left:28px;width:${JOY_R*2}px;height:${JOY_R*2}px;border-radius:50%;background:rgba(6,10,22,0.70);border:2px solid rgba(11,196,255,0.32);display:none;z-index:101;pointer-events:none;box-sizing:border-box;`;
 
 const joyRing = document.createElement('div');
-joyRing.style.cssText = 'position:absolute;width:80px;height:80px;border-radius:50%;border:1px solid #1A3A5A;transform:translate(-50%,-50%);pointer-events:none;opacity:0;transition:opacity 0.1s;';
+joyRing.style.cssText = `position:absolute;inset:10px;border-radius:50%;border:1px dashed rgba(11,196,255,0.20);pointer-events:none;`;
 
 const joyDot = document.createElement('div');
-joyDot.style.cssText = 'position:absolute;width:40px;height:40px;border-radius:50%;background:rgba(11,196,255,0.15);border:2px solid #0BC4FF;transform:translate(-50%,-50%);pointer-events:none;left:-200px;top:-200px;';
+joyDot.style.cssText = `position:absolute;width:${JOY_K*2}px;height:${JOY_K*2}px;border-radius:50%;background:rgba(11,196,255,0.28);border:2px solid rgba(11,196,255,0.85);top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;box-sizing:border-box;`;
 
-joyPad.appendChild(joyHint);
 joyPad.appendChild(joyRing);
 joyPad.appendChild(joyDot);
-canvas.parentElement.after(joyPad);
+document.body.appendChild(joyPad);
+
+// Full-screen touch zone — covers entire viewport, floating joystick appears where finger lands
+const joyScreen = document.createElement('div');
+joyScreen.style.cssText = 'position:fixed;inset:0;z-index:99;display:none;touch-action:none;';
+document.body.appendChild(joyScreen);
 
 function setGameMode(mode) {
   gameMode = mode;
   if (mode === 'phone') {
     document.body.classList.add('phone-mode');
-    joyPad.style.display = 'flex';
+    joyScreen.style.display = 'block';
   } else {
     document.body.classList.remove('phone-mode');
+    joyScreen.style.display = 'none';
     joyPad.style.display = 'none';
   }
 }
-if (gameMode === 'phone') joyPad.style.display = 'flex';
+if (gameMode === 'phone') joyScreen.style.display = 'block';
 
-let joyActive = false, joyLX = 0, joyLY = 0, joyBX = 0, joyBY = 0;
-const JOY_SENS = 2.5, JOY_MAX_R = 32;
+let joyActive = false, joyLX = 0, joyLY = 0;
 
-joyPad.addEventListener('touchstart', e => {
-  e.preventDefault();
-  const t = e.changedTouches[0];
+function joyKnob(clientX, clientY) {
   const r = joyPad.getBoundingClientRect();
-  joyActive = true;
-  joyLX = t.clientX; joyLY = t.clientY;
-  joyBX = t.clientX - r.left; joyBY = t.clientY - r.top;
-  joyRing.style.left = joyBX + 'px'; joyRing.style.top = joyBY + 'px';
-  joyRing.style.opacity = '1';
-  joyDot.style.left = joyBX + 'px'; joyDot.style.top = joyBY + 'px';
+  const dx = clientX - (r.left + JOY_R), dy = clientY - (r.top + JOY_R);
+  const d = Math.min(Math.sqrt(dx*dx + dy*dy), JOY_MAX), a = Math.atan2(dy, dx);
+  joyDot.style.transform = `translate(calc(-50% + ${(Math.cos(a)*d).toFixed(1)}px), calc(-50% + ${(Math.sin(a)*d).toFixed(1)}px))`;
+}
+
+function joyStart(cx, cy) {
+  // Position the floating joystick ring at the touch point
+  joyPad.style.left = (cx - JOY_R) + 'px';
+  joyPad.style.top  = (cy - JOY_R) + 'px';
+  joyPad.style.display = 'block';
+  joyActive = true; joyLX = cx; joyLY = cy;
+  joyDot.style.transform = 'translate(-50%, -50%)';
   if (!audioUnlocked) {
-    audioUnlocked = true;
-    getAC();
+    audioUnlocked = true; getAC();
     NEW_RECORD_AUDIO.play().then(() => { NEW_RECORD_AUDIO.pause(); NEW_RECORD_AUDIO.currentTime = 0; }).catch(() => {});
   }
-  if (!gameRunning) startGame();
-}, { passive: false });
-
-joyPad.addEventListener('touchmove', e => {
-  e.preventDefault();
-  if (!joyActive) return;
-  const t = e.touches[0];
-  const sx = W / canvasRect.width, sy = H / canvasRect.height;
-  mouse.x = Math.max(0, Math.min(W, mouse.x + (t.clientX - joyLX) * JOY_SENS * sx));
-  mouse.y = Math.max(0, Math.min(H, mouse.y + (t.clientY - joyLY) * JOY_SENS * sy));
-  joyLX = t.clientX; joyLY = t.clientY;
-  const r = joyPad.getBoundingClientRect();
-  const dx = t.clientX - (r.left + joyBX);
-  const dy = t.clientY - (r.top + joyBY);
-  const dist = Math.min(Math.sqrt(dx * dx + dy * dy), JOY_MAX_R);
-  const ang = Math.atan2(dy, dx);
-  joyDot.style.left = (joyBX + Math.cos(ang) * dist) + 'px';
-  joyDot.style.top = (joyBY + Math.sin(ang) * dist) + 'px';
-}, { passive: false });
-
-joyPad.addEventListener('touchend', e => {
-  e.preventDefault();
-  joyActive = false;
-  joyRing.style.opacity = '0';
-  joyDot.style.left = '-200px'; joyDot.style.top = '-200px';
-}, { passive: false });
-
-// Mouse events for joypad (PC testing phone mode)
-function joyStartAt(clientX, clientY) {
-  const r = joyPad.getBoundingClientRect();
-  joyActive = true;
-  joyLX = clientX; joyLY = clientY;
-  joyBX = clientX - r.left; joyBY = clientY - r.top;
-  joyRing.style.left = joyBX + 'px'; joyRing.style.top = joyBY + 'px';
-  joyRing.style.opacity = '1';
-  joyDot.style.left = joyBX + 'px'; joyDot.style.top = joyBY + 'px';
-  if (!gameRunning) startGame();
 }
-function joyMoveAt(clientX, clientY) {
+
+function joyMove(cx, cy) {
   if (!joyActive) return;
   const sx = W / canvasRect.width, sy = H / canvasRect.height;
-  mouse.x = Math.max(0, Math.min(W, mouse.x + (clientX - joyLX) * JOY_SENS * sx));
-  mouse.y = Math.max(0, Math.min(H, mouse.y + (clientY - joyLY) * JOY_SENS * sy));
-  joyLX = clientX; joyLY = clientY;
-  const r = joyPad.getBoundingClientRect();
-  const dx = clientX - (r.left + joyBX), dy = clientY - (r.top + joyBY);
-  const dist = Math.min(Math.sqrt(dx * dx + dy * dy), JOY_MAX_R);
-  const ang = Math.atan2(dy, dx);
-  joyDot.style.left = (joyBX + Math.cos(ang) * dist) + 'px';
-  joyDot.style.top = (joyBY + Math.sin(ang) * dist) + 'px';
+  mouse.x = Math.max(0, Math.min(W, mouse.x + (cx - joyLX) * JOY_SENS * sx));
+  mouse.y = Math.max(0, Math.min(H, mouse.y + (cy - joyLY) * JOY_SENS * sy));
+  joyLX = cx; joyLY = cy;
+  joyKnob(cx, cy);
 }
-function joyEnd() {
+
+function joyStop() {
   joyActive = false;
-  joyRing.style.opacity = '0';
-  joyDot.style.left = '-200px'; joyDot.style.top = '-200px';
+  joyPad.style.display = 'none';
+  joyDot.style.transform = 'translate(-50%, -50%)';
 }
-joyPad.addEventListener('mousedown', e => { joyStartAt(e.clientX, e.clientY); });
-document.addEventListener('mousemove', e => { if (joyActive) joyMoveAt(e.clientX, e.clientY); });
-document.addEventListener('mouseup', () => { if (joyActive) joyEnd(); });
+
+joyScreen.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  if (!gameRunning) {
+    // Forward tap to overlay buttons/inputs underneath
+    joyScreen.style.pointerEvents = 'none';
+    const el = document.elementFromPoint(t.clientX, t.clientY);
+    joyScreen.style.pointerEvents = 'auto';
+    if (el && (el.tagName === 'BUTTON' || el.tagName === 'INPUT')) { el.click(); return; }
+    startGame(); return;
+  }
+  joyStart(t.clientX, t.clientY);
+}, { passive: false });
+
+joyScreen.addEventListener('touchmove', e => { e.preventDefault(); joyMove(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
+joyScreen.addEventListener('touchend',  e => { e.preventDefault(); joyStop(); }, { passive: false });
+
+// Mouse equivalents for PC phone-mode testing
+joyScreen.addEventListener('mousedown', e => {
+  if (!gameRunning) { startGame(); return; }
+  joyStart(e.clientX, e.clientY);
+});
+document.addEventListener('mouseup', () => { if (joyActive) joyStop(); });
 
 // Pointer Lock: ล็อกเมาส์ไว้ใน canvas ตอนเล่น
 document.addEventListener('pointerlockchange', () => {
@@ -448,7 +443,7 @@ document.addEventListener('pointerlockchange', () => {
 });
 
 document.addEventListener('mousemove', e => {
-  if (joyActive) return;
+  if (joyActive) { joyMove(e.clientX, e.clientY); return; }
   if (gameMode === 'phone') return;
   if (document.pointerLockElement === canvas) {
     mouse.x = Math.max(0, Math.min(W, mouse.x + e.movementX));
@@ -465,29 +460,7 @@ canvas.addEventListener('click', () => {
     canvas.requestPointerLock();
   }
 });
-canvas.addEventListener('touchmove', e => {
-  e.preventDefault();
-  const t = e.touches[0];
-  const scaleX = W / canvasRect.width;
-  const scaleY = H / canvasRect.height;
-  mouse.x = (t.clientX - canvasRect.left) * scaleX;
-  mouse.y = (t.clientY - canvasRect.top) * scaleY;
-}, { passive: false });
 let audioUnlocked = false;
-canvas.addEventListener('touchstart', e => {
-  e.preventDefault();
-  const t = e.touches[0];
-  const scaleX = W / canvasRect.width;
-  const scaleY = H / canvasRect.height;
-  mouse.x = (t.clientX - canvasRect.left) * scaleX;
-  mouse.y = (t.clientY - canvasRect.top) * scaleY;
-  if (!audioUnlocked) {
-    audioUnlocked = true;
-    getAC();
-    NEW_RECORD_AUDIO.play().then(() => { NEW_RECORD_AUDIO.pause(); NEW_RECORD_AUDIO.currentTime = 0; }).catch(() => {});
-  }
-  if (!gameRunning) startGame();
-}, { passive: false });
 
 // Projectile types
 const TYPES = [
