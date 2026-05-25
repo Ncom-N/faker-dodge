@@ -247,6 +247,21 @@
   <span>ESC = ปลดล็อกเมาส์ · คลิก = ล็อกกลับ</span>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyA_8L-UzPrB6fqdNOsbHV0t3ppbwbidsng",
+  authDomain: "game-dodge.firebaseapp.com",
+  databaseURL: "https://game-dodge-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "game-dodge",
+  storageBucket: "game-dodge.firebasestorage.app",
+  messagingSenderId: "739959001169",
+  appId: "1:739959001169:web:78c0bf34623ea8f176a870"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+</script>
 <script>
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -259,13 +274,22 @@ let mouse = { x: W/2, y: H - 80 };
 let best = null;
 let currentName = localStorage.getItem('fakerLastName') || '';
 
-// ─── Leaderboard ──────────────────────────────────────────────────────────────
+// ─── Leaderboard (Firebase) ───────────────────────────────────────────────────
+let cachedLB = [];
+
+db.ref('leaderboard').on('value', snap => {
+  const data = snap.val();
+  cachedLB = data ? (Array.isArray(data) ? data : Object.values(data)).filter(Boolean) : [];
+  cachedLB.sort((a, b) => b.time - a.time);
+  updateBestHUD();
+});
+
 function getLB() {
-  return JSON.parse(localStorage.getItem('fakerBoard') || '[]');
+  return cachedLB;
 }
 
 function saveLB(name, time, rank) {
-  const lb = getLB();
+  const lb = [...cachedLB];
   const idx = lb.findIndex(e => e.name === name);
   let isPersonalBest = false;
   if (idx >= 0) {
@@ -279,7 +303,7 @@ function saveLB(name, time, rank) {
   }
   lb.sort((a, b) => b.time - a.time);
   lb.splice(10);
-  localStorage.setItem('fakerBoard', JSON.stringify(lb));
+  db.ref('leaderboard').set(lb);
   return { lb, isPersonalBest };
 }
 
