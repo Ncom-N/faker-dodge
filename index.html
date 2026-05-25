@@ -94,7 +94,7 @@
   }
 
   body.phone-mode { height: 100vh; overflow: hidden; padding: 0; justify-content: flex-start; }
-  body.phone-mode #canvas { width: 100vw !important; height: calc(100dvh - 52px) !important; }
+  body.phone-mode #canvas { max-width: none !important; }
   body.phone-mode h1 { display: none; }
   body.phone-mode .subtitle { display: none; }
   body.phone-mode .controls { display: none; }
@@ -252,7 +252,7 @@ const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const overlay = document.getElementById('overlay');
 
-const W = canvas.width, H = canvas.height;
+let W = canvas.width, H = canvas.height;
 
 let player, projectiles, particles, score, startTime, gameRunning, animId, level, spawnRate;
 let mouse = { x: W/2, y: H - 80 };
@@ -329,7 +329,6 @@ function showStartScreen() {
 
 // Cache rect — recalc only on resize, not every mousemove
 let canvasRect = canvas.getBoundingClientRect();
-window.addEventListener('resize', () => { canvasRect = canvas.getBoundingClientRect(); });
 
 const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 let gameMode = isMobile ? 'phone' : 'pc';
@@ -361,18 +360,44 @@ const joyScreen = document.createElement('div');
 joyScreen.style.cssText = 'position:fixed;inset:0;z-index:99;display:none;touch-action:none;';
 document.body.appendChild(joyScreen);
 
+function setupPhoneCanvas() {
+  W = window.innerWidth;
+  H = window.innerHeight - 50;
+  canvas.width  = W;
+  canvas.height = H;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  canvasRect = canvas.getBoundingClientRect();
+}
+
+function resetPCCanvas() {
+  W = 1000; H = 680;
+  canvas.width  = W;
+  canvas.height = H;
+  canvas.style.width  = '';
+  canvas.style.height = '';
+  canvasRect = canvas.getBoundingClientRect();
+}
+
 function setGameMode(mode) {
   gameMode = mode;
   if (mode === 'phone') {
     document.body.classList.add('phone-mode');
     joyScreen.style.display = 'block';
+    setupPhoneCanvas();
   } else {
     document.body.classList.remove('phone-mode');
     joyScreen.style.display = 'none';
     joyPad.style.display = 'none';
+    resetPCCanvas();
   }
 }
-if (gameMode === 'phone') joyScreen.style.display = 'block';
+if (gameMode === 'phone') { joyScreen.style.display = 'block'; setupPhoneCanvas(); }
+
+window.addEventListener('resize', () => {
+  canvasRect = canvas.getBoundingClientRect();
+  if (gameMode === 'phone') setupPhoneCanvas();
+});
 
 let joyActive = false, joyLX = 0, joyLY = 0;
 
