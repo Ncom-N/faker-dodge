@@ -186,7 +186,7 @@
   .name-input:focus { border-bottom-color: var(--blue); }
   .name-input::placeholder { color: #2A4060; letter-spacing: 1px; font-family: 'Sarabun', sans-serif; font-size: 0.9rem; }
 
-  .lb-wrap { width: 640px; max-width: 100%; box-sizing: border-box; }
+  .lb-wrap { width: 640px; max-width: 100%; box-sizing: border-box; max-height: 420px; overflow-y: auto; }
   .lb-row {
     display: grid;
     grid-template-columns: 28px 1fr 80px 88px;
@@ -207,6 +207,8 @@
   .lb-time { font-family: 'Orbitron', monospace; color: var(--blue); font-size: 0.95rem; }
   .lb-rank { font-size: 0.82rem; text-align: right; }
 </style>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 </head>
 <body>
 
@@ -247,21 +249,6 @@
   <span>ESC = ปลดล็อกเมาส์ · คลิก = ล็อกกลับ</span>
 </div>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
-<script>
-const firebaseConfig = {
-  apiKey: "AIzaSyA_8L-UzPrB6fqdNOsbHV0t3ppbwbidsng",
-  authDomain: "game-dodge.firebaseapp.com",
-  databaseURL: "https://game-dodge-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "game-dodge",
-  storageBucket: "game-dodge.firebasestorage.app",
-  messagingSenderId: "739959001169",
-  appId: "1:739959001169:web:78c0bf34623ea8f176a870"
-};
-firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
-</script>
 <script>
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -272,39 +259,62 @@ let W = canvas.width, H = canvas.height;
 let player, projectiles, particles, score, startTime, gameRunning, animId, level, spawnRate;
 let mouse = { x: W/2, y: H - 80 };
 let best = null;
-let currentName = localStorage.getItem('fakerLastName') || '';
+let currentName = '';
 
-// ─── Leaderboard (Firebase) ───────────────────────────────────────────────────
-let cachedLB = [];
+// ─── Firebase ─────────────────────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyA_8L-UzPrB6fqdNOsbHV0t3ppbwbidsng",
+  authDomain: "game-dodge.firebaseapp.com",
+  databaseURL: "https://game-dodge-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "game-dodge",
+  storageBucket: "game-dodge.firebasestorage.app",
+  messagingSenderId: "739995900169",
+  appId: "1:739995900169:web:78c0bf34623ea8f176a870"
+};
+firebase.initializeApp(firebaseConfig);
+const fbDB = firebase.database();
 
-db.ref('leaderboard').on('value', snap => {
-  const data = snap.val();
-  cachedLB = data ? (Array.isArray(data) ? data : Object.values(data)).filter(Boolean) : [];
-  cachedLB.sort((a, b) => b.time - a.time);
-  updateBestHUD();
-});
+// ─── Leaderboard Cache (realtime จาก Firebase) ────────────────────────────────
+let lbCache = { leaderboard: [], leaderboard_pc: [], leaderboard_phone: [] };
+
+function parseFBBoard(val) {
+  if (!val) return [];
+  return Object.values(val)
+    .filter(e => e && e.name && typeof e.time === 'number')
+    .sort((a, b) => b.time - a.time)
+    .slice(0, 100);
+}
+
+function lbKey()   { return `leaderboard_${gameMode}`; }
+function nameKey() { return `fakerLastName_${gameMode}`; }
 
 function getLB() {
-  return cachedLB;
+  return lbCache[lbKey()] || [];
 }
 
 function saveLB(name, time, rank) {
-  const lb = [...cachedLB];
-  const idx = lb.findIndex(e => e.name === name);
-  let isPersonalBest = false;
-  if (idx >= 0) {
-    if (time > lb[idx].time) {
-      lb[idx] = { name, time, rankName: rank.name, rankColor: rank.color };
-      isPersonalBest = true;
-    }
-  } else {
-    lb.push({ name, time, rankName: rank.name, rankColor: rank.color });
-    isPersonalBest = true;
+  const modeKey  = lbKey();
+  const entry    = { name, time, rankName: rank.name, rankColor: rank.color, platform: gameMode };
+  const modeLb   = lbCache[modeKey] || [];
+  const existing = modeLb.find(e => e.name === name);
+  const isPersonalBest = !existing || time > existing.time;
+
+  if (isPersonalBest) {
+    fbDB.ref(`${modeKey}/${name}`).set(entry);
+    fbDB.ref(`leaderboard/${name}`).transaction(cur => (!cur || time > cur.time) ? entry : undefined);
   }
-  lb.sort((a, b) => b.time - a.time);
-  lb.splice(10);
-  db.ref('leaderboard').set(lb);
-  return { lb, isPersonalBest };
+
+  let updatedLb = [...modeLb];
+  if (isPersonalBest) {
+    const idx = updatedLb.findIndex(e => e.name === name);
+    if (idx >= 0) updatedLb[idx] = entry;
+    else updatedLb.push(entry);
+    updatedLb.sort((a, b) => b.time - a.time);
+    updatedLb.splice(100);
+    lbCache[modeKey] = updatedLb;
+  }
+
+  return { lb: updatedLb, isPersonalBest };
 }
 
 function updateBestHUD() {
@@ -357,6 +367,7 @@ let canvasRect = canvas.getBoundingClientRect();
 const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 let gameMode = isMobile ? 'phone' : 'pc';
 if (gameMode === 'phone') document.body.classList.add('phone-mode');
+currentName = localStorage.getItem(`fakerLastName_${gameMode}`) || '';
 
 // ─── MOBA-style fixed joystick (ROV style) ────────────────────────────────────
 const JOY_R   = 48;   // outer circle radius (px)
@@ -405,6 +416,7 @@ function resetPCCanvas() {
 
 function setGameMode(mode) {
   gameMode = mode;
+  currentName = localStorage.getItem(nameKey()) || '';
   if (mode === 'phone') {
     document.body.classList.add('phone-mode');
     joyScreen.style.display = 'block';
@@ -790,12 +802,20 @@ function stopBGM() {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── Firebase Realtime Listeners ──────────────────────────────────────────────
+['leaderboard', 'leaderboard_pc', 'leaderboard_phone'].forEach(key => {
+  fbDB.ref(key).on('value', snap => {
+    lbCache[key] = parseFBBoard(snap.val());
+    updateBestHUD();
+  });
+});
+
 showStartScreen();
 
 function startGame() {
   const inp = document.getElementById('nameInput');
   currentName = (inp?.value.trim() || currentName || 'Player').slice(0, 16);
-  localStorage.setItem('fakerLastName', currentName);
+  localStorage.setItem(nameKey(), currentName);
   document.getElementById('hudName').textContent = currentName;
   updateBestHUD();
 
@@ -990,18 +1010,6 @@ function gameOver(elapsed) {
   }
 
   const myIdx = lb.findIndex(e => e.name === currentName);
-
-  const medals = ['🥇','🥈','🥉'];
-  const lbRows = lb.map((e, i) => {
-    const isMe = i === myIdx;
-    return `<div class="lb-row${isMe ? ' lb-me' : ''}">
-      <span class="lb-pos">${medals[i] || (i+1)}</span>
-      <span class="lb-name">${e.name}${isMe ? ' <span style="color:var(--blue);font-size:0.7rem;font-family:\'Sarabun\',sans-serif;">[คุณ]</span>' : ''}</span>
-      <span class="lb-time">${e.time.toFixed(2)}s</span>
-      <span class="lb-rank" style="color:${e.rankColor};">${e.rankName}</span>
-    </div>`;
-  }).join('');
-
   const posText = myIdx === 0 ? '🏆 อันดับ 1!' : myIdx >= 0 ? `อันดับที่ ${myIdx + 1}` : '';
 
   overlay.style.display = 'flex';
@@ -1020,13 +1028,48 @@ function gameOver(elapsed) {
     </div>
 
     <div class="lb-wrap">
-      <div style="font-family:'Orbitron',monospace;font-size:0.68rem;color:#4A6080;letter-spacing:3px;text-align:center;padding:6px 0 8px;border-bottom:1px solid #1A2A40;">TOP 10 LEADERBOARD</div>
-      ${lbRows}
+      <div style="display:flex;gap:6px;justify-content:center;padding:6px 0 8px;border-bottom:1px solid #1A2A40;">
+        <button id="tab_leaderboard"       onclick="renderLBTab('leaderboard')"       style="background:transparent;border:1px solid #1A3A5A;color:#3A6080;font-size:0.72rem;padding:3px 12px;cursor:pointer;border-radius:2px;font-family:'Orbitron',monospace;">🌐 ALL</button>
+        <button id="tab_leaderboard_pc"    onclick="renderLBTab('leaderboard_pc')"    style="background:transparent;border:1px solid #1A3A5A;color:#3A6080;font-size:0.72rem;padding:3px 12px;cursor:pointer;border-radius:2px;font-family:'Orbitron',monospace;">🖥 PC</button>
+        <button id="tab_leaderboard_phone" onclick="renderLBTab('leaderboard_phone')" style="background:transparent;border:1px solid #1A3A5A;color:#3A6080;font-size:0.72rem;padding:3px 12px;cursor:pointer;border-radius:2px;font-family:'Orbitron',monospace;">📱 PHONE</button>
+      </div>
+      <div id="lbRows"></div>
     </div>
 
     <button class="start-btn" onclick="showStartScreen()">เล่นอีกครั้ง</button>
     <div style="width:100%;height:3px;background:linear-gradient(90deg,transparent,#FF4455,transparent);"></div>
   `;
+  renderLBTab(lbKey());
+}
+
+function renderLBTab(key) {
+  const lb      = lbCache[key] || [];
+  const medals  = ['🥇','🥈','🥉'];
+  const myName  = currentName;
+  const myIdx   = lb.findIndex(e => e.name === myName);
+  const showPlatform = key === 'leaderboard';
+  const rows    = lb.map((e, i) => {
+    const isMe         = i === myIdx;
+    const platformIcon = e.platform === 'phone' ? '📱' : e.platform === 'pc' ? '🖥' : '';
+    return `<div class="lb-row${isMe ? ' lb-me' : ''}">
+      <span class="lb-pos">${medals[i] || (i+1)}</span>
+      <span class="lb-name">${e.name}${isMe ? ' <span style="color:var(--blue);font-size:0.7rem;font-family:\'Sarabun\',sans-serif;">[คุณ]</span>' : ''}${showPlatform && platformIcon ? ` <span style="font-size:0.8rem;" title="${e.platform}">${platformIcon}</span>` : ''}</span>
+      <span class="lb-time">${e.time.toFixed(2)}s</span>
+      <span class="lb-rank" style="color:${e.rankColor};">${e.rankName}</span>
+    </div>`;
+  }).join('') || '<div style="color:#4A6080;text-align:center;padding:16px;font-size:0.85rem;">ยังไม่มีข้อมูล</div>';
+
+  const el = document.getElementById('lbRows');
+  if (el) el.innerHTML = rows;
+
+  ['leaderboard', 'leaderboard_pc', 'leaderboard_phone'].forEach(k => {
+    const btn = document.getElementById(`tab_${k}`);
+    if (!btn) return;
+    const active = k === key;
+    btn.style.background = active ? '#0BC4FF22' : 'transparent';
+    btn.style.borderColor = active ? '#0BC4FF'   : '#1A3A5A';
+    btn.style.color       = active ? '#0BC4FF'   : '#3A6080';
+  });
 }
 </script>
 </body>
